@@ -1,85 +1,88 @@
-const router = require("express").Router();
-router.get("/spotify/user", async (req, res) => {
-  const accessToken = req.query.access_token;
+const express = require("express");
+const axios = require("axios");
+const OpenAI = require("openai");
 
-  if (!accessToken)
-    return res.status(400).json({ error: "Missing access_token" });
+const router = express.Router();
 
-  const headers = {
-    Authorization: `Bearer ${accessToken}`,
-  };
+// Init OpenAI
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
+// Helper for Spotify GET
+async function spotifyGet(url, token) {
+  return axios.get(url, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+}
+
+// 🔥 AI prompt generator
+async function getAiAnalysis(spotifyData) {
+  const prompt = `
+Analyze the user's Spotify music taste based on this JSON data:
+
+${JSON.stringify(spotifyData, null, 2)}
+
+You must return a FUN, PERSONAL, HUMOROUS and INSIGHTFUL summary.
+
+Make sure to include:
+- What genres they like most
+- What their personality might be like based on music
+- A funny roast (light, playful)
+- A music recommendation that fits their taste
+
+Return the answer in structured JSON with:
+{
+  "taste_summary": "...",
+  "roast": "...",
+  "recommendations": ["...", "..."]
+}
+`;
+
+  const response = await client.chat.completions.create({
+    model: "gpt-4.1-mini", // or "gpt-4.1"
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.9
+  });
+
+  return JSON.parse(response.choices[0].message.content);
+}
+
+
+// 🔥 MAIN ROUTE: /spotify/analyze
+router.get("/analyze", async (req, res) => {
   try {
-    /* ========== 1. USER PROFILE ========== */
-    const userRes = await fetch("https://api.spotify.com/v1/me", { headers });
-    const user = await userRes.json();
-    if (user.error) return res.status(400).json({ error: user.error });
+    const token = req.query.access_token;
 
-    /* ========== 2. TOP ARTISTS ========== */
-    const artistsRes = await fetch(
-      "https://api.spotify.com/v1/me/top/artists?limit=10",
-      { headers }
-    );
-    const artistsJSON = await artistsRes.json();
+    if (!token) {
+      return res.status(400).json({ error: "Missing access_token" });
+    }
 
-    const top_artists =
-      artistsJSON.items?.map((artist) => ({
-        name: artist.name,
-        genres: artist.genres,
-        popularity: artist.popularity,
-        followers: artist.followers.total,
-        image: artist.images?.[0]?.url || null,
-      })) || [];
+    // Get Spotify data in parallel
+    const [artistsRes, tracksRes, playlistsRes] = await Promise.all([
+      spotifyGet("https://api.spotify.com/v1/me/top/artists?limit=20", token),
+      spotifyGet("https://api.spotify.com/v1/me/top/tracks?limit=20", token),
+      spotifyGet("https://api.spotify.com/v1/me/playlists?limit=20", token),
+    ]);
 
-    /* ========== 3. TOP TRACKS ========== */
-    const tracksRes = await fetch(
-      "https://api.spotify.com/v1/me/top/tracks?limit=10",
-      { headers }
-    );
-    const tracksJSON = await tracksRes.json();
+    const spotifyData = {
+      top_artists: artistsRes.data,
+      top_tracks: tracksRes.data,
+      playlists: playlistsRes.data
+    };
 
-    const top_tracks =
-      tracksJSON.items?.map((track) => ({
-        name: track.name,
-        album: track.album.name,
-        artist: track.artists.map((a) => a.name).join(", "),
-        popularity: track.popularity,
-        preview_url: track.preview_url,
-        image: track.album.images?.[0]?.url || null,
-      })) || [];
+    // 🔥 AI analysis
+    const aiAnalysis = await getAiAnalysis(spotifyData);
 
-    /* ========== 4. PLAYLISTS ========== */
-    const playlistsRes = await fetch(
-      "https://api.spotify.com/v1/me/playlists?limit=10",
-      { headers }
-    );
-    const playlistsJSON = await playlistsRes.json();
-
-    const playlists =
-      playlistsJSON.items?.map((p) => ({
-        name: p.name,
-        id: p.id,
-        tracks: p.tracks.total,
-        owner: p.owner.display_name,
-        image: p.images?.[0]?.url || null,
-      })) || [];
-
-    /* ========== FINAL RESPONSE ========== */
+    // Return everything
     return res.json({
-      user: {
-        id: user.id,
-        display_name: user.display_name,
-        email: user.email,
-        followers: user.followers?.total,
-        profile_image: user.images?.[0]?.url || null,
-      },
-      top_artists,
-      top_tracks,
-      playlists,
+      raw_data: spotifyData,
+      ai_analysis: aiAnalysis
     });
-  } catch (err) {
-    console.error("Spotify user fetch error:", err);
-    return res.status(500).json({ error: "Server error fetching data" });
+
+  } catch (error) {
+    console.error("ERROR:", error.response?.data || error.message);
+    return res.status(500).json({ error: "Failed to analyze music data" });
   }
 });
 
