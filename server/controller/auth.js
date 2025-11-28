@@ -30,13 +30,53 @@ router.get("/auth/login", (request, response) => {
   );
 });
 
-router.get("/auth/callback", (request, response) => {
+router.get("/auth/callback", async (request, response) => {
   const code = request.query.code;
   const state = request.query.state;
 
-  console.log("code: ", code, " state : ", state);
+  if (!code) {
+    return response.status(400).send("Missing code");
+  }
 
-  return response.status(200).send(`Callback received! You can close this. ${state} & ${code}`);
+  try {
+    const tokenURL = "https://accounts.spotify.com/api/token";
+
+    const params = new URLSearchParams();
+    params.append("grant_type", "authorization_code");
+    params.append("code", code);
+    params.append("redirect_uri", redirect_uri);
+
+    const authHeader =
+      "Basic " +
+      Buffer.from(
+        process.env.SPOTIFY_CLIENT_ID + ":" + process.env.SPOTIFY_CLIENT_SECRET
+      ).toString("base64");
+
+    const result = await fetch(tokenURL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: authHeader,
+      },
+      body: params.toString(),
+    });
+
+    const data = await result.json();
+
+    console.log("TOKEN RESULT:", data);
+
+    // access_token, refresh_token
+    return response.status(200).json({
+      message: "Tokens received",
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      expires_in: data.expires_in,
+    });
+  } catch (err) {
+    console.error("Error exchanging code:", err);
+    return response.status(500).send("Internal Server Error");
+  }
 });
+
 
 module.exports = router;
