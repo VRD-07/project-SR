@@ -35,6 +35,8 @@ router.get("/auth/callback", (request, response) => {
   const state = request.query.state;
 
   console.log("code: ", code, " state : ", state);
+
+  return response.status(200).send("Callback received! You can close this.");
 });
 
 module.exports = router;
