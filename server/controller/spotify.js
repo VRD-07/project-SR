@@ -38,7 +38,7 @@ Tone: funny, personal, light roast, music nerd vibes.
   `;
 
   const response = await client.post("/chat/completions", {
-    model: "google/gemma-7b", // ✅ 100% FREE MODEL
+    model: "google/gemini-2.0-flash-001", // ✅ 100% FREE MODEL
     messages: [
       { role: "user", content: prompt }
     ],
